@@ -763,6 +763,12 @@ class EulerBeam:
         A = self.get_stiffness_matrix(x)
         B = self.get_mass_matrix(x)
 
+        C = B.dot(QN)
+        U, R = np.linalg.qr(C)
+
+        print(eta)
+        print(eta_stress)
+
         # Form the augmented linear system of equations
         for k in range(self.Np):
             # Compute B * vk = D * qk
@@ -772,14 +778,16 @@ class EulerBeam:
 
             # Solve the augmented system of equations for wk
             Ak = A - lam[k] * B
-            Ck = np.dot(B, QN)
 
             # Set up the augmented linear system of equations
-            mat = np.block([[Ak, Ck], [Ck.T, np.zeros((self.Np, self.Np))]])
+            mat = np.block([[Ak, C], [C.T, np.zeros((self.Np, self.Np))]])
             b = np.zeros(mat.shape[0])
 
             # Compute the right-hand-side vector
             b[: self.ndof] = -eta[k] * prod
+
+            # t = np.dot(U.T, b[: self.ndof])
+            # b[: self.ndof] = b[: self.ndof] - np.dot(U, t)
 
             # Solve the first block linear system of equations
             sol = np.linalg.solve(mat, b)
@@ -796,6 +804,9 @@ class EulerBeam:
             dk = np.dot(A, vk)
             b[: self.ndof] = dk
 
+            # t = np.dot(U.T, b[: self.ndof])
+            # b[: self.ndof] = b[: self.ndof] - np.dot(U, t)
+
             sol = np.linalg.solve(mat, b)
             uk = sol[: self.ndof]
 
@@ -803,6 +814,24 @@ class EulerBeam:
             dfdx -= self.get_mass_matrix_deriv(QN[:, k], uk)
 
         return dfdx
+
+    def check_consisten(self, x, QN, eta, eta_stress):
+
+        # Compute the stresses in the beam
+        stress = self.get_stress_values(x, eta, QN, allowable=allowable)
+
+        value = np.dot(stress, eta_stress)
+        print("value = ", value)
+
+        value2 = 0.0
+        for k in range(self.Np):
+            prod = self.get_stress_product(x, eta_stress, QN[:, k], allowable=allowable)
+            value2 += eta[k] * np.dot(prod, QN[:, k])
+
+        print("value2 = ", value2)
+        print("rel. diff = ", (value - value2) / value)
+
+        return
 
     # def plot_modes(self, x, N=5):
     #     """
@@ -1325,12 +1354,12 @@ elif problem == "optimization_eigenvalue":
 elif problem == "stress":
     # settings for the beam
     setting_beam = {
-        "nelems": 100,
-        "ndvs": 20,
+        "nelems": 500,
+        "ndvs": 3,
         "L": 1.0,
         "t": 0.025,
-        "N": 10,
-        "ksrho": 100.0,
+        "N": 6,
+        "ksrho": 0.1,
     }
 
     beam = EulerBeam(**setting_beam)
@@ -1340,7 +1369,7 @@ elif problem == "stress":
     # settings for the stress
     setting_stress = {
         "rho": 100.0,
-        "allowable": 1.0,
+        "allowable": 100.0,
     }
 
     # settings for the optimization
@@ -1357,21 +1386,27 @@ elif problem == "stress":
 
     # check the stress derivative
     if True:
-        dh = 1e-6
         x = 0.1 * np.ones(beam.ndvs)
         p = np.random.uniform(size=x.shape)
 
-        fd = (
-            beam.eigenvector_stress(x + dh * p, rho=rho, allowable=allowable)
-            - beam.eigenvector_stress(x - dh * p, rho=rho, allowable=allowable)
-        ) / (2.0 * dh)
-
+        value = beam.eigenvector_stress(x * p, rho=rho, allowable=allowable)
+        print("aggregated stress = ", value)
         dfdx = beam.eigenvector_stress_deriv(x, rho=rho, allowable=allowable)
-        ans = np.dot(dfdx, p)
 
-        print("fd      = ", fd)
-        print("ans     = ", ans)
-        print("rel err = ", (fd - ans) / fd)
+        for dh in 10 ** np.linspace(-4, -10, 10):
+            fd = (
+                beam.eigenvector_stress(x + dh * p, rho=rho, allowable=allowable)
+                - beam.eigenvector_stress(x - dh * p, rho=rho, allowable=allowable)
+            ) / (2.0 * dh)
+
+            ans = np.dot(dfdx, p)
+
+            # print("dh      = %15.5e" % (dh))
+            # print("fd      = %15.5f" % (fd))
+            # print("ans     = %15.5f" % (ans))
+            print("rel err = %15.5e" % ((fd - ans) / fd))
+
+    exit(0)
 
     # psuedo inverse of N
     Npinv = np.linalg.inv(beam.N.T @ beam.N) @ beam.N.T
