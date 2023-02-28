@@ -6,3 +6,7 @@ __pycache__
 .vscode
 .DS_Store
 *.png
+/output
+/result
+/test.py
+/kernel.py
